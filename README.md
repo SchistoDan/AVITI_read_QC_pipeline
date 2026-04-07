@@ -4,8 +4,8 @@ A snakemake pipeline for QC of raw, baecalled and demultiplexed AVITI24 sequence
 Takes a the AVITI24 RunManifest.csv and a parent directory of FASTQ files (Samples/), merges samples across lanes, concatenates where needed, runs pre-QC FastQC, fastp QC, post-QC FastQC, and aggregates everything into a single MultiQC report. PhiX entries and Unassigned reads are excluded.
 
 
-## Dependencies & installation
 
+## Dependencies & installation
 1. Clone this repository.
 2. Install all necessary dependencies listed in `aviti_read_qc_pipeline.yaml` provided in this repository, using the following commands:
 ```
@@ -16,14 +16,27 @@ conda env create -f aviti_read_qc_pipeline.yaml
 conda activate aviti_read_qc_pipeline
 ```
 
+**Core dependencies:**
+- fastp=1.3.1
+- falco=1.2.5
+- multiqc=1.33
+- python=3.12
+- snakemake=9.9.0
+- snakemake-executor-plugin-slurm=1.6.1
+3. You are now ready to prepare the pipeline to run (see below).
+
+
 
 ## Quick start
 1. Follow the installation and conda env creation steps above.
 2. Populate `config/config.yaml` with the required run paremeters and paths.
-3. Run `NAME.slurm` to execute the pipeline by submitting the required jobs to a SLURM HPC.
+3. Run `aviti_read_qc_pipeline.slurm` with `sbatch` to execute the pipeline. This script will submit all required jobs to a SLURM HPC.
+
+
 
 ## Workflow overview
-lane_merge → pre_fastqc → fastp → post_fastqc → multiqc
+**Rule worklow:** lane_merge → pre_fastqc → fastp → post_fastqc → multiqc
+
 
 ### Sample grouping and lane concatenation
 Samples are grouped by matching Index1 + Index2 pairs listed in RunManifest.csv. Samples sharing the same index pair (i.e. the same library sequenced across multiple lanes) are concatenated before QC. A name-based validation layer checks that grouped sample names share a common prefix, and a warning is written to sample_manifest.log if this looks suspicious (but the pipeline does not fail). 
@@ -99,7 +112,7 @@ This snakemake pipeline was written by Dan Parsons for NHMUK Molecualr Biology L
 Please see below for a list of citations for tools utilised in the pipeline:
 | Tool | URL | citation | Version |
 | --- | --- | --- | --- |
-| snakemake | ... | ... | 
+| snakemake | ... | 9.9.0 | 
 | Falco | https://github.com/smithlabcode/falco | [de Sena Brandine and Smith, 2021](https://f1000research.com/articles/8-1874/v2) | 1.2.5 |
 | Fastp | https://github.com/opengene/fastp | [Chen, 2025](https://onlinelibrary.wiley.com/doi/10.1002/imt2.70078) | 1.3.1 |
 | MultiQC | ... | ... | 1.33 |
