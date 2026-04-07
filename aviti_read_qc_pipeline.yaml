@@ -1,0 +1,12 @@
+name: aviti_read_qc_pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - fastp=1.3.1
+  --falco=1.2.5
+  - multiqc=1.33
+  - python=3.12
+  - snakemake=9.9.0
+  - snakemake-executor-plugin-slurm=1.6.1
