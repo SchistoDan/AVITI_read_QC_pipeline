@@ -3,6 +3,7 @@ A snakemake pipeline for QC of raw, baecalled and demultiplexed AVITI24 sequence
 
 Takes a the AVITI24 RunManifest.csv and a parent directory of FASTQ files (Samples/), merges samples across lanes, concatenates where needed, runs pre-QC FastQC, fastp QC, post-QC FastQC and Seqkit stats, and aggregates everything into a single MultiQC report. PhiX entries and Unassigned reads are excluded.
 
+---
 
 ## Dependencies & installation
 1. Clone this repository.
@@ -23,20 +24,32 @@ conda activate aviti_read_qc_pipeline
 - snakemake=9.9.0
 - snakemake-executor-plugin-slurm=1.6.1
 - zip=3.0
+- seqkit=2.13.0
 3. You are now ready to prepare the pipeline to run (see below).
 
-
+---
 
 ## Quick start
 1. Follow the installation and conda env creation steps above.
 2. Populate `config/config.yaml` with the required run paremeters and paths.
 3. Run `sbatch aviti_read_qc_pipeline.slurm` to execute the pipeline. This script will submit all required jobs to a SLURM HPC.
-< You will need to edit the conda 'source' line to correctly point to your `conda.sh`, and will need to change the cluster partition (from 'day') if not using the NHM HPC.
+> Within aviti_read_qc_pipeline.sh, you will need to edit the conda 'source' line to correctly point to your `conda.sh`, as well as your NHM email address.
 
-
+---
 
 ## Workflow overview
-**Rule worklow:** lane_merge → pre_fastqc → fastp → post_fastqc → multiqc
+**The pipeline comprises the following main steps:**
+1. The necessary information within the RunManifest.csv is parsed (extracts the [SETTINGS] and [SAMPLES] blocks, while skipping PhiX entries).
+2. Samples are then grouped by Index1+Index2 pair to identify replicates across lanes (if any), and per-lane filepaths are constructed for each sample.
+3. Together, these form the sample_table dictionary used for downstream rules, and which is visualised in the output sample_manifest.log
+4. Rule 1: `lane_merge` - Concatenation of lane replicates (if required). Single-lane samples are copied directly. Empty inputs produce placeholder files that propagate gracefully through downstream rules (calls `workflow/scripts/lane_merge.py`).
+5. Rule 2: `pre_fastqc` -  Runs falco implementation of FastQC for R1 and R2 files on the concatenated reads, writing HTML/data/summary files to `01_pre_qc/{sample}/` and zipping them for `multiqc`.
+6. Rule 3: `fastp` -  Trims user-specified adapters, filters by quality/length, and deduplicates, writing trimmed reads to `02_fastp/{sample}/` and generating a HTML and JSON report for `multiqc` and `fastp_summary`. Poly-G and poly-X tail trimming, and read error correction, are optional, and along with additional fastp arguments, can be specified in the `config/config.yaml` 
+7. Rule 4: `post_fastqc` - Repeats the falco QC but on the fastp-trimmed reads, writing to `03_post_qc/{sample}/` and zipping them for `multiqc`.
+8. Rule 5: `seqkit_stats` - Runs `seqkit stats --all --tabular` on both trimmed R1 and R2, writing a tab-separated stats file to `04_seqkit/{sample}/{sample}_seqkit_stats.txt` for `multiqc`.
+9. Rule 6: `fastp_summary` - Walks `02_fastp/`, finding all per-sample JSON reports and compiles them into a single CSV at `02_fastp/{run_name}_fastp_summary.csv`. Columns include pre/post read counts, Q20/Q30 rates, GC content, duplication rate, insert size peak, and filtering outcome counts (calls `workflow/scripts/parse_fastp_stats.py`).
+10. Rule 6: `multiqc` - Searches `01_pre_qc/`, `02_fastp/`, `03_post_qc/`, and `04_seqkit/` and aggregates all falco zips, fastp JSONs, and seqkit stats files into a single HTML report in `multiqc_report/`.
+
 
 <div align="center">
   <img width="384" height="546" src="https://github.com/user-attachments/assets/492cece9-85d5-483c-99fe-cac4feefa997">
@@ -74,6 +87,7 @@ The base sample name used for output files is derived from the longest common pr
 - build_sample_table(config) — Orchestrates everything above. Calls parse → group → find files for each group → validates names → assembles the final sample_table dict that all Snakemake rules read from. Also accumulates the processed/skipped/warnings lists for logging.
 write_manifest_log(...) — Writes a human-readable summary of the entire sample resolution process to logs/sample_manifest.log before any jobs run. Critically useful for verifying grouping is correct before committing cluster resources.
 
+---
 
 ## Output directory structure
 ```
@@ -111,6 +125,13 @@ output_dir/
     ├── post_qc/
     └── multiqc/
 ```
+
+---
+
+## Benchmarking
+End-to-end, the pipeline ran on 96 low coverage WGS (i.e.genome skims) of museum specimens, run on both flowcell lanes (i.e. were duplicates across lanes), in **X** hours and **Y** minutes with modest resources.
+
+---
 
 ## Citations & authorship
 This snakemake pipeline was written by Dan Parsons for NHMUK Molecualr Biology Laboratories.
