@@ -1,5 +1,7 @@
 # AVITI_read_QC_pipeline
-A snakemake pipeline for QC of raw, basecalled and demultiplexed AVITI24 sequence data. The pipeline takes an AVITI24 RunManifest.csv and a parent directory of raw FASTQ files (Samples/), merges replicate samples across lanes, concatenates replicates where needed, runs pre-QC FastQC (falco), fastp QC, post-QC FastQC (falco) and Seqkit stats, and then produces a summary spreadsheet of fastp QC metrics and aggregates everything into a single MultiQC report. PhiX entries and Unassigned reads are excluded.
+A snakemake pipeline for QC of raw, basecalled and demultiplexed AVITI24 sequence data, written for the MBL team @NHMUK.
+
+The pipeline takes an AVITI24 RunManifest.csv and a parent directory of raw FASTQ files (Samples/), merges replicate samples across lanes, concatenates replicates where needed, runs pre-QC FastQC (falco), fastp QC, post-QC FastQC (falco) and Seqkit stats, and then produces a summary spreadsheet of fastp QC metrics and aggregates everything into a single MultiQC report. PhiX entries and Unassigned reads are excluded.
 
 ---
 
@@ -10,7 +12,7 @@ A snakemake pipeline for QC of raw, basecalled and demultiplexed AVITI24 sequenc
 # conda must be installed first
 conda env create -f aviti_read_qc_pipeline.yaml
 
-# Check the environment was succesfully created
+# Check the environment was successfully created
 conda activate aviti_read_qc_pipeline
 ```
 
@@ -68,11 +70,26 @@ The base sample name used for output files is derived from the longest common pr
 
 
 
-### Key parameter explanations
-- `qualified_quality_phred`: defines what "unqualified" means in terms of base quality (phred) score
-- `unqualified_percent_limit`: defines what the 'tolerance' is 
-- `trim_poly_g`: 
-- `trim_poly_x`: 
+### Key parameters in the config.yaml
+The following parameters are configruable within the `config.config.yaml`
+- `run_name`: Unique identifier for this run (used in output filenames and MultiQC report). Can be anything sensible
+- `run_manifest`: Path to the RunManifest.csv file
+- `samples_dir`: Path to parent directory under which FASTQ files will be recursively searched. The pipeline expects files named '{SampleName}_R1.fastq.gz' and '{SampleName}_R2.fastq.gz' in per-sample subdirectories anywhere under this root
+- `output_dir`: Directory where all pipeline outputs will be written (created if absent)
+- `adapter_r1` & `adapter_r2`: Adapter sequences used for forward and reverse reads
+- Fastp:
+  - `qualified_quality_phred`: Phred score threshold; bases below this are 'unqualified'
+  - `unqualified_percent_limit`: Maximum % of unqualified bases allowed per read before it is discarded
+  - `dedup`: Flag to set whether identical read pairs are deduplicated, or not
+  - `trim_poly_g`: 
+  - `trim_poly_x`:
+  - `correction`: Overlap-based base correction for paired-end reads. it has the following parameters by default: overlap_len_require (default 30), overlap_diff_limit (default 5) and overlap_diff_percent_limit (default 20%)
+  - `extra_args`: Any additional fastp arguments that are not already configurable
+- MultiQC:
+  - `extra_args`: Any additional multiqc arguments that are not already configurable
+- rules: Controls memory and threading resource allocation given to each rule. 
+
+
 
 ### Python helper functions
 - validate_config(config) — Sanity-checks the config.yaml before anything else runs. Confirms all required keys exist, that path values point to real files/directories, and that numeric fastp parameters are valid types. Exits with a clear error message rather than letting Snakemake fail cryptically mid-run.
