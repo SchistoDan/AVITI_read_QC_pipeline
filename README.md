@@ -22,6 +22,7 @@ conda activate aviti_read_qc_pipeline
 - python=3.12
 - snakemake=9.9.0
 - snakemake-executor-plugin-slurm=1.6.1
+- zip=3.0
 3. You are now ready to prepare the pipeline to run (see below).
 
 
@@ -29,7 +30,8 @@ conda activate aviti_read_qc_pipeline
 ## Quick start
 1. Follow the installation and conda env creation steps above.
 2. Populate `config/config.yaml` with the required run paremeters and paths.
-3. Run `aviti_read_qc_pipeline.slurm` with `sbatch` to execute the pipeline. This script will submit all required jobs to a SLURM HPC.
+3. Run `sbatch aviti_read_qc_pipeline.slurm` to execute the pipeline. This script will submit all required jobs to a SLURM HPC.
+< You will need to edit the conda 'source' line to correctly point to your `conda.sh`, and will need to change the cluster partition (from 'day') if not using the NHM HPC.
 
 
 
@@ -61,13 +63,13 @@ The base sample name used for output files is derived from the longest common pr
 
 ### Python helper functions
 - validate_config(config) — Sanity-checks the config.yaml before anything else runs. Confirms all required keys exist, that path values point to real files/directories, and that numeric fastp parameters are valid types. Exits with a clear error message rather than letting Snakemake fail cryptically mid-run.
-parse_run_manifest(manifest_path) — Reads the RunManifest.csv line by line, handling the two-section format ([SETTINGS] and [SAMPLES]), skipping comment lines and blank lines. Returns the settings dict, the list of sample rows, and a list of already-skipped entries (PhiX).
-group_samples_by_index(samples_rows) — Takes the flat list of sample rows and groups them into a dict keyed by (Index1, Index2) tuple. This is the primary grouping authority — samples sharing an index pair are the same biological library across lanes.
-longest_common_prefix(strings) — Pure string utility. Compares a list of strings character by character and returns the longest prefix shared by all of them. Used to derive base sample names from grouped lane names.
-derive_base_name(names) — Calls longest_common_prefix then strips any trailing non-alphanumeric characters (e.g. trailing underscores or hyphens) from the result. Converts ["Pan1", "Pan1a"] → "Pan1" cleanly.
-validate_name_grouping(base_name, names, index_key) — The name-matching validation layer on top of index grouping. Warns (but never fails) if the derived base name is suspiciously short (< 3 chars) or if any sample name in the group doesn't start with the base name. Results go to the manifest log.
-find_fastq_files(sample_name, samples_dir) — Recursively globs under samples_dir for files matching {sample_name}_*_R1*.fastq.gz and _R2*. Applies strict_filter to prevent prefix collisions (e.g. Pan1 matching Pan1a files) by anchoring the regex to require an underscore immediately after the sample name.
-build_sample_table(config) — Orchestrates everything above. Calls parse → group → find files for each group → validates names → assembles the final sample_table dict that all Snakemake rules read from. Also accumulates the processed/skipped/warnings lists for logging.
+- parse_run_manifest(manifest_path) — Reads the RunManifest.csv line by line, handling the two-section format ([SETTINGS] and [SAMPLES]), skipping comment lines and blank lines. Returns the settings dict, the list of sample rows, and a list of already-skipped entries (PhiX).
+- group_samples_by_index(samples_rows) — Takes the flat list of sample rows and groups them into a dict keyed by (Index1, Index2) tuple. This is the primary grouping authority — samples sharing an index pair are the same biological library across lanes.
+- longest_common_prefix(strings) — Pure string utility. Compares a list of strings character by character and returns the longest prefix shared by all of them. Used to derive base sample names from grouped lane names.
+- derive_base_name(names) — Calls longest_common_prefix then strips any trailing non-alphanumeric characters (e.g. trailing underscores or hyphens) from the result. Converts ["Pan1", "Pan1a"] → "Pan1" cleanly.
+- validate_name_grouping(base_name, names, index_key) — The name-matching validation layer on top of index grouping. Warns (but never fails) if the derived base name is suspiciously short (< 3 chars) or if any sample name in the group doesn't start with the base name. Results go to the manifest log.
+- find_fastq_files(sample_name, samples_dir) — Recursively globs under samples_dir for files matching {sample_name}_*_R1*.fastq.gz and _R2*. Applies strict_filter to prevent prefix collisions (e.g. Pan1 matching Pan1a files) by anchoring the regex to require an underscore immediately after the sample name.
+- build_sample_table(config) — Orchestrates everything above. Calls parse → group → find files for each group → validates names → assembles the final sample_table dict that all Snakemake rules read from. Also accumulates the processed/skipped/warnings lists for logging.
 write_manifest_log(...) — Writes a human-readable summary of the entire sample resolution process to logs/sample_manifest.log before any jobs run. Critically useful for verifying grouping is correct before committing cluster resources.
 
 
