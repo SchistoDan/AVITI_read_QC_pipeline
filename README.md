@@ -1,7 +1,5 @@
 # AVITI_read_QC_pipeline
-A snakemake pipeline for QC of raw, baecalled and demultiplexed AVITI24 sequence data, compilaiton and visualisation of pre- and post-QC metrics, and concatenation of duplicate sequencing attempts across flowcell lanes
-
-Takes a the AVITI24 RunManifest.csv and a parent directory of FASTQ files (Samples/), merges samples across lanes, concatenates where needed, runs pre-QC FastQC, fastp QC, post-QC FastQC and Seqkit stats, and aggregates everything into a single MultiQC report. PhiX entries and Unassigned reads are excluded.
+A snakemake pipeline for QC of raw, basecalled and demultiplexed AVITI24 sequence data. The pipeline takes an AVITI24 RunManifest.csv and a parent directory of raw FASTQ files (Samples/), merges replicate samples across lanes, concatenates replicates where needed, runs pre-QC FastQC (falco), fastp QC, post-QC FastQC (falco) and Seqkit stats, and then produces a summary spreadsheet of fastp QC metrics and aggregates everything into a single MultiQC report. PhiX entries and Unassigned reads are excluded.
 
 ---
 
