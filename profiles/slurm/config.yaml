@@ -1,0 +1,21 @@
+# profiles/slurm/config.yaml
+# SLURM execution profile for the pipeline.
+
+executor: slurm
+
+default-resources:
+  - slurm_partition=day
+  - slurm_extra="--ntasks=1 --no-requeue"
+    # slurm_partition: default SLURM partition (overridden per-rule via config.yaml rules block)
+    # --ntasks=1: one MPI task per job (recommended for this pipeline)
+    # --no-requeue: prevents automatic requeue on failure (Snakemake handles retries)
+
+# Job submission settings
+jobs: 10                            # Maximum concurrent jobs (running + pending) on the cluster
+local-cores: 1                      # CPU cores used on the login/head node for Snakemake internals
+
+# File system and status settings
+latency-wait: 120                   # Seconds to wait for output files after job completion
+                                    # Increase on slow networked file systems
+seconds-between-status-checks: 60  # Interval between SLURM job status queries
+max-status-checks-per-second: 0.01 # Throttle SLURM polling to avoid overwhelming the scheduler
