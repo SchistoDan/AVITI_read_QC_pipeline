@@ -71,7 +71,7 @@ The base sample name used for output files is derived from the longest common pr
 
 
 ### Key parameters in the config.yaml
-The following parameters are configruable within the `config.config.yaml`
+The following parameters are configurable within the `config/config.yaml`
 - `run_name`: Unique identifier for this run (used in output filenames and MultiQC report). Can be anything sensible
 - `run_manifest`: Path to the RunManifest.csv file
 - `samples_dir`: Path to parent directory under which FASTQ files will be recursively searched. The pipeline expects files named '{SampleName}_R1.fastq.gz' and '{SampleName}_R2.fastq.gz' in per-sample subdirectories anywhere under this root
@@ -131,8 +131,14 @@ output_dir/
 
 ---
 
+## Run SOP
+Please see the dedicated SOP_README.md for step by step guidance on setting up and running the pipeline.
+
+
+---
+
 ## Benchmarking
-End-to-end, the pipeline ran on 96 low coverage WGS (i.e.genome skims) of museum specimens, run on both flowcell lanes (i.e. were duplicates across lanes), in **X** hours and **Y** minutes with modest resources.
+End-to-end, the pipeline ran on 96 low coverage WGS (i.e.genome skims) generated from museum specimens, run on both flowcell lanes (i.e. replicates across lanes), in **4 hours and 56 minutes** with modest resources < lane_merge = 16GB/8 threads; fastqc = 8GB/4 threads; fastp = 16GB/8 threads; seqkit = 8GB/4 threads; multiqc = 16GB/2 threads.
 
 ---
 
@@ -142,7 +148,9 @@ This snakemake pipeline was written by Dan Parsons for NHMUK Molecualr Biology L
 Please see below for a list of citations for tools utilised in the pipeline:
 | Tool | URL | citation | Version |
 | --- | --- | --- | --- |
-| snakemake | ... | 9.9.0 | 
-| Falco | https://github.com/smithlabcode/falco | [de Sena Brandine and Smith, 2021](https://f1000research.com/articles/8-1874/v2) | 1.2.5 |
+| snakemake | https://snakemake.readthedocs.io/en/stable/ | [Mölder et al., 2025](https://f1000research.com/articles/10-33/v3) | 9.9.0 | 
+| Falco | https://github.com/smithlabcode/falco | [DS Brandine and Smith, 2021](https://f1000research.com/articles/8-1874/v2) | 1.2.5 |
 | Fastp | https://github.com/opengene/fastp | [Chen, 2025](https://onlinelibrary.wiley.com/doi/10.1002/imt2.70078) | 1.3.1 |
-| MultiQC | ... | ... | 1.33 |
+| MultiQC | https://github.com/MultiQC/MultiQC | [Ewels et al., 2016](https://academic.oup.com/bioinformatics/article/32/19/3047/2196507) | 1.33 |
+| Seqkit | https://github.com/shenwei356/seqkit | [Shen et al., 2024](https://onlinelibrary.wiley.com/doi/10.1002/imt2.191) | 2.13.0 |
+
