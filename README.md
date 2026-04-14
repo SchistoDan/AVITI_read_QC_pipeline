@@ -54,7 +54,7 @@ conda activate aviti_read_qc_pipeline
 
 
 <div align="center">
-  <img width="384" height="546" src="https://github.com/user-attachments/assets/492cece9-85d5-483c-99fe-cac4feefa997">
+  <img width="384" height="546" src="https://github.com/user-attachments/assets/42288bdb-5083-407f-bec8-d51e8da3867a">
 </div>
 
 
