@@ -109,10 +109,15 @@ When `additional_run_manifests` (in the `config.yaml`) is populated, the pipelin
 | `correction` | Overlap-based base correction for paired-end reads (overlap_len_require 30, overlap_diff_limit 5, overlap_diff_percent_limit 20%) | `false` |
 | `extra_args` | Any additional fastp arguments as a raw string | `""` |
  
+**Falco (pre & post QC)**
+| Parameter | Description | Default |
+|---|---|---|
+| `falco.extra_args` | Any additional falco arguments as a raw string (applied to both pre- and post-QC falco runs) | `""` |
+
 **MultiQC**
 | Parameter | Description | Default |
 |---|---|---|
-| `extra_args` | Any additional MultiQC arguments as a raw string | `""` |
+| `multiqc.extra_args` | Any additional MultiQC arguments as a raw string | `""` |
  
 **Resource allocation (`rules`)**
 Each rule block accepts `mem_mb`, `threads`, and `partition` (SLURM partition name). Memory is scaled by retry attempt number on failure (up to the configured `retries` count per rule).

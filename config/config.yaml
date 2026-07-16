@@ -47,6 +47,14 @@ fastp:
   extra_args: ""
 
 
+# ===== FALCO PARAMETERS =====
+# Applied to both pre_fastqc and post_fastqc rules
+falco:
+  # Any additional falco arguments as a raw string, e.g.:
+  #   extra_args: "--bisulfite"
+  extra_args: ""
+
+
 # ===== MULTIQC PARAMETERS =====
 
 multiqc:
