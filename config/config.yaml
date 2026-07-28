@@ -10,6 +10,18 @@ run_manifest: "/path/to/runmanifest.csv"
 additional_run_manifests:
   - /patho/to/any/additional/runmanifest.csv
 
+# Optional: merge samples with different names across runs into a single output sample.
+# Map each desired output name to the list of per-run SampleName values (or their
+# derived base names) that represent the same biological sample.
+# Samples not listed here are unaffected and proceed through the pipeline unchanged.
+# Variants listed here but absent from every manifest produce a warning (not an error).
+# Output names may contain letters, digits, hyphens, underscores, and dots.
+# Avoid spaces, slashes, and shell metacharacters.
+# sample_aliases:
+#   CanonicalOutputName:
+#     - run1_sample_name
+#     - run3_sample_name
+
 # Directory where all pipeline outputs will be written (created if absent)
 output_dir: "/path/to/output/directory"
 

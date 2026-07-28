@@ -70,6 +70,24 @@ def validate_config(config):
         sys.stderr.write("ERROR: lane_merge.enabled must be true or false (boolean) in config.yaml\n")
         sys.exit(1)
 
+    # Validate sample_aliases if present
+    aliases = config.get("sample_aliases", {})
+    if not isinstance(aliases, dict):
+        sys.stderr.write("ERROR: sample_aliases must be a mapping of canonical name -> list of variants\n")
+        sys.exit(1)
+    for canonical, variants in aliases.items():
+        if not isinstance(variants, list) or not variants:
+            sys.stderr.write(
+                f"ERROR: sample_aliases['{canonical}'] must be a non-empty list of sample names\n"
+            )
+            sys.exit(1)
+        for v in variants:
+            if not isinstance(v, str) or not v.strip():
+                sys.stderr.write(
+                    f"ERROR: sample_aliases['{canonical}'] contains a non-string or empty entry\n"
+                )
+                sys.exit(1)
+
     # Validate rule resources block
     if "rules" not in config:
         sys.stderr.write("ERROR: Missing 'rules' resource block in config\n")
@@ -345,6 +363,37 @@ def parse_single_run(manifest_path):
 
 # ===== BUILD SAMPLE TABLE =====
 
+def apply_sample_aliases(run_table, alias_reverse):
+    """
+    Rename base_names in run_table according to alias_reverse (variant -> canonical).
+    Returns the renamed table and the set of variant names that were matched.
+    Samples with no alias entry pass through unchanged.
+    """
+    new_table = {}
+    matched_variants = set()
+
+    for base_name, info in run_table.items():
+        canonical = alias_reverse.get(base_name, base_name)
+        if canonical != base_name:
+            matched_variants.add(base_name)
+
+        if canonical in new_table:
+            new_table[canonical]["r1"].extend(info["r1"])
+            new_table[canonical]["r2"].extend(info["r2"])
+            new_table[canonical]["lane_names"].extend(info["lane_names"])
+            new_table[canonical]["n_lanes"] += info["n_lanes"]
+        else:
+            new_table[canonical] = {
+                "r1": list(info["r1"]),
+                "r2": list(info["r2"]),
+                "lane_names": list(info["lane_names"]),
+                "index_key": info["index_key"],
+                "n_lanes": info["n_lanes"],
+            }
+
+    return new_table, matched_variants
+
+
 def build_sample_table(config):
     """
     Parse the primary manifest plus any additional_run_manifests, merging
@@ -363,6 +412,14 @@ def build_sample_table(config):
     """
     manifest_paths = [config["run_manifest"]] + config.get("additional_run_manifests", [])
 
+    aliases = config.get("sample_aliases", {})
+    alias_reverse = {
+        variant: canonical
+        for canonical, variants in aliases.items()
+        for variant in variants
+    }
+    all_matched_variants = set()
+
     sample_table = {}
     sample_sources = {}   # base_name -> [(manifest_path, r1_files, r2_files)]
     index_keys_seen = {}  # base_name -> {manifest_path: index_key}
@@ -374,6 +431,10 @@ def build_sample_table(config):
     for manifest_path in manifest_paths:
         run_table, run_processed, run_skipped, run_warnings, run_settings = \
             parse_single_run(manifest_path)
+
+        if alias_reverse:
+            run_table, matched = apply_sample_aliases(run_table, alias_reverse)
+            all_matched_variants.update(matched)
 
         all_skipped.extend(run_skipped)
         all_warnings.extend(run_warnings)
@@ -422,6 +483,15 @@ def build_sample_table(config):
                 (manifest_path, info["r1"], info["r2"])
             )
             index_keys_seen.setdefault(base_name, {})[manifest_path] = info["index_key"]
+
+    # Warn about alias variants that were never matched in any manifest
+    if alias_reverse:
+        for variant in sorted(set(alias_reverse) - all_matched_variants):
+            canonical = alias_reverse[variant]
+            all_warnings.append(
+                f"WARNING: sample_aliases variant '{variant}' (-> '{canonical}') "
+                f"was not found in any manifest. Check for typos."
+            )
 
     # Warn if the same sample appears with a different index pair across runs
     for base_name, by_manifest in index_keys_seen.items():
