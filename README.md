@@ -80,6 +80,17 @@ The base sample name used for output files is derived from the longest common pr
 ### Cross-run merging
 When `additional_run_manifests` (in the `config.yaml`) is populated, the pipeline merges FASTQ file lists for samples that appear in more than one run. The `[SETTINGS]` blocks from all manifests must be identical; any mismatch causes a hard exit with a diff of the conflicting keys. Samples present in only one run are included as-is. Cross-run merging always requires `lane_merge.enabled: true`, since merged samples will by definition have more than one input file per read direction.
 
+Samples are matched across runs by their derived base name (longest common prefix of per-lane `SampleName` values sharing the same index pair). If the same biological sample has **different names** across runs (e.g. due to differing lane/position prefixes), use the optional `sample_aliases` block to map a single canonical output name to all of its per-run variants:
+
+```yaml
+sample_aliases:
+  CanonicalOutputName:
+    - run1_sample_name
+    - run3_sample_name
+```
+
+Each key becomes the sample name used throughout all outputs. Samples not listed in `sample_aliases` are unaffected. If a listed variant is absent from every manifest, a warning is written to `logs/sample_manifest.log` (not a hard error). Output names may contain letters, digits, hyphens, underscores, and dots; avoid spaces, slashes, and shell metacharacters.
+
 
 ## Key parameters in `config/config.yaml`
 **General**
@@ -88,6 +99,7 @@ When `additional_run_manifests` (in the `config.yaml`) is populated, the pipelin
 | `run_name` | Unique identifier for this run, used in output filenames and the MultiQC report title |
 | `run_manifest` | Path to the primary `RunManifest.csv`. The sibling `Samples/` directory is derived automatically from this path |
 | `additional_run_manifests` | Optional list of additional `RunManifest.csv` paths for cross-run sample merging. Requires `lane_merge.enabled: true` |
+| `sample_aliases` | Optional mapping of canonical output name → list of per-run sample name variants. Use when the same biological sample has different names across runs. Unmatched variants produce a warning, not an error |
 | `output_dir` | Directory where all pipeline outputs will be written (created if absent) |
  
 **Lane merge** 
