@@ -51,10 +51,10 @@ The pipeline comprises the following main steps:
 2. **Sample grouping** — Samples are grouped by matching `Index1 + Index2` pair to identify lane replicates. When `additional_run_manifests` are provided, samples appearing in more than one run have their FASTQ file lists merged across runs. Settings blocks from all manifests are compared and the pipeline exits with a clear diff if any key differs. A summary is written to `logs/sample_manifest.log`.
 3. **Rule 1 — `lane_merge`** — Lane replicates are concatenated into a single R1/R2 pair per sample (calls `workflow/scripts/lane_merge.py`). Single-lane samples are copied directly. When `lane_merge.enabled: false`, single-lane samples are symlinked instead of copied; multi-lane samples raise an error (merging is required and cannot be skipped). Empty inputs produce placeholder files that propagate gracefully through all downstream rules.
 4. **Rule 2 — `pre_fastqc`** — Runs falco on the merged R1 and R2 reads, writing HTML/data/summary files and zip archives to `01_pre_qc/{sample}/` for MultiQC.
-5. **Rule 3 — `fastp`** — Trims adapters, filters by quality and length, and deduplicates reads. Poly-G and poly-X tail trimming and overlap-based base correction are optional. Trimmed reads and HTML/JSON reports are written to `02_fastp/{sample}/`.
+5. **Rule 3 — `fastp`** — Trims adapters, filters by quality and length, and deduplicates reads. Poly-G and poly-X tail trimming and overlap-based base correction are optional. Trimmed reads and HTML/JSON reports are written to `02_fastp/{sample}/`. See [Interpreting duplication metrics](#interpreting-duplication-metrics) for what `dedup` does and does not remove.
 6. **Rule 4 — `post_fastqc`** — Repeats falco QC on the fastp-trimmed reads, writing to `03_post_qc/{sample}/`.
 7. **Rule 5 — `seqkit_stats`** — Runs `seqkit stats --all --tabular` on both trimmed R1 and R2, writing a tab-separated stats file to `04_seqkit/{sample}/{sample}_seqkit_stats.txt`.
-8. **Rule 6 — `fastp_summary`** — Walks `02_fastp/`, finds all per-sample JSON reports, and compiles them into a single CSV at `02_fastp/{run_name}_fastp_summary.csv`. Also writes `{run_name}_general_stats_mqc.yaml`, which injects accurate raw and final read/base counts (from `summary.before_filtering` and `summary.after_filtering`) into the MultiQC General Statistics table — correcting for the fastp module's default use of `filtering_result.passed_filter_reads`, which is measured before deduplication (calls `workflow/scripts/parse_fastp_stats.py`).
+8. **Rule 6 — `fastp_summary`** — Walks `02_fastp/`, finds all per-sample JSON reports, and compiles them into a single CSV at `02_fastp/{run_name}_fastp_summary.csv`. Also writes `{run_name}_general_stats_mqc.yaml`, which injects accurate raw and final read/base counts (from `summary.before_filtering` and `summary.after_filtering`) into the MultiQC General Statistics table — correcting for the fastp module's default use of `filtering_result.passed_filter_reads`, which is measured before deduplication (calls `workflow/scripts/parse_fastp_stats.py`). Every sample gets a row: samples with no usable reads are recorded as zero with `status: empty_input`, rather than being omitted. A fastp JSON that exists but cannot be parsed fails the rule, since that means fastp itself did not finish.
 9. **Rule 7 — `multiqc`** — Searches `01_pre_qc/`, `02_fastp/`, `03_post_qc/`, and `04_seqkit/`, and aggregates all falco zips, fastp JSONs, seqkit stats files, and the custom general-stats YAML into a single HTML report in `multiqc_report/`.
 
 
@@ -90,6 +90,24 @@ sample_aliases:
 ```
 
 Each key becomes the sample name used throughout all outputs. Samples not listed in `sample_aliases` are unaffected. If a listed variant is absent from every manifest, a warning is written to `logs/sample_manifest.log` (not a hard error). Output names may contain letters, digits, hyphens, underscores, and dots; avoid spaces, slashes, and shell metacharacters.
+
+
+### Interpreting duplication metrics
+The report carries two unrelated duplication measurements. They answer different questions, and reading one as the other is the single easiest mistake to make with this pipeline.
+
+**fastp's Duplication section — pair-level, whole file.** This is the rate that `dedup` acted on, and the figure to quote when asked how duplicated a library was. It is also in the summary CSV as `duplication_rate`. Three properties matter:
+
+- **Exact match, and pair-level.** A pair counts as duplicate only if *both* mates match another pair base-for-base. A single sequencing error or `N` in either mate rescues the pair. With low R2 quality this excludes a large fraction of genuine duplicates.
+- **Keyed on *untrimmed* reads.** fastp hashes the raw sequence before any trimming, so two fragments that are identical *after* adapter trimming but differ in their adapter-derived tails are never recognised as duplicates. `dedup` is therefore raw-read deduplication, not fragment-level deduplication.
+- **Approximate.** Detection uses a Bloom filter of bounded size (`--dup_calc_accuracy`, default 3 when `dedup` is on). Collisions can only ever produce false *positives* — a unique read wrongly discarded — never false negatives, and the rate rises with sequencing depth.
+
+Treat `dedup` as an opportunistic PCR/optical duplicate reducer, not an authoritative deduplication step. If you need a real duplicate rate, mark duplicates after alignment (`samtools markdup`) or use a k-mer/prefix tool (`clumpify`, `seqkit rmdup`).
+
+**`% duplicate reads` in the General Statistics table — per mate, estimated.** This comes from falco's Sequence Duplication Levels module and is *not* a residual-PCR-duplicate count. It is computed per file with no pairing (so a pair kept because its R2 differed is still a perfect duplicate in R1), from only the first 100,000 distinct sequences encountered, then binned and extrapolated to model the full library. At a few hundred million reads per file that cap is reached in the first fraction of a percent of the file, which is also position-biased on the flow cell.
+
+Read it as a **library-complexity / insert-size-collapse indicator**. A high post-fastp value usually means short inserts rather than PCR duplication: heavily adapter-contaminated samples trim down to very short reads, and short reads have so little sequence space that genuinely distinct fragments collapse into identical strings. The post-QC column is hidden by default for this reason and can be enabled via 'Configure Columns'; the raw-read column is kept visible as a complexity flag.
+
+**Read counts.** `filtering_result.passed_filter_reads` is counted *before* duplicate removal and so overstates delivered yield whenever `dedup` is on. The authoritative delivered-read figures are `after_total_reads` / `after_total_bases` in the CSV, and the "Reads After Filtering" / "Bases After Filtering" columns in the report, all taken from `summary.after_filtering`.
 
 
 ## Key parameters in `config/config.yaml`

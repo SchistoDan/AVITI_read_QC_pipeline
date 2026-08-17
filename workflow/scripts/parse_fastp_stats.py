@@ -9,13 +9,55 @@ import sys
 import yaml
 
 
+STATUS_OK = 'ok'
+STATUS_EMPTY = 'empty_input'
+
+# Counts that are genuinely zero for a sample that had no usable reads. Rates and
+# the insert-size peak are undefined rather than zero, so they stay 'NA'.
+ZERO_COUNT_FIELDS = (
+    'before_total_reads', 'before_total_bases', 'before_q20_bases', 'before_q30_bases',
+    'after_total_reads', 'after_total_bases', 'after_q20_bases', 'after_q30_bases',
+    'passed_filter_reads', 'low_quality_reads', 'too_many_N_reads',
+    'too_short_reads', 'too_long_reads',
+)
+NA_FIELDS = (
+    'before_q20_rate', 'before_q30_rate', 'before_gc_content',
+    'after_q20_rate', 'after_q30_rate', 'after_gc_content',
+    'duplication_rate', 'insert_size_peak',
+)
+
+
+def empty_sample_stats():
+    """Stats for a sample whose fastp JSON is a zero-byte placeholder.
+
+    rule fastp in the Snakefile touches empty outputs (including the JSON) when a
+    sample has no usable reads after lane merge. Such a sample must still appear in
+    the CSV and the MultiQC table as zero, rather than silently vanishing from the
+    QC report.
+    """
+    stats = {field: 0 for field in ZERO_COUNT_FIELDS}
+    stats.update({field: 'NA' for field in NA_FIELDS})
+    stats['status'] = STATUS_EMPTY
+    return stats
+
+
 def parse_fastp_json(json_path):
-    """Parse fastp JSON file and extract specified statistics."""
+    """Parse fastp JSON file and extract specified statistics.
+
+    Returns a stats dict, or None if the file exists but could not be parsed.
+    A zero-byte file is not an error: it is the placeholder written for samples
+    with no usable reads, and yields zero-filled stats.
+    """
     try:
+        if os.path.getsize(json_path) == 0:
+            print(f"Note: {json_path} is empty (sample had no usable reads); "
+                  f"recording zero counts", file=sys.stderr)
+            return empty_sample_stats()
+
         with open(json_path, 'r') as f:
             data = json.load(f)
 
-        stats = {}
+        stats = {'status': STATUS_OK}
 
         # Before filtering stats
         bf = data['summary']['before_filtering']
@@ -51,16 +93,17 @@ def parse_fastp_json(json_path):
             'too_long_reads': fr['too_long_reads']
         })
 
-        # Duplication rate
-        stats['duplication_rate'] = data['duplication']['rate']
+        # Duplication rate. fastp omits the whole "duplication" object when
+        # --dont_eval_duplication is set without --dedup, so this is optional.
+        stats['duplication_rate'] = data.get('duplication', {}).get('rate', 'NA')
 
-        # Insert size peak
-        stats['insert_size_peak'] = data['insert_size']['peak']
+        # Insert size peak. Absent for single-end input.
+        stats['insert_size_peak'] = data.get('insert_size', {}).get('peak', 'NA')
 
         return stats
 
-    except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
-        print(f"Error parsing {json_path}: {e}", file=sys.stderr)
+    except (OSError, KeyError, TypeError, AttributeError, json.JSONDecodeError) as e:
+        print(f"ERROR: could not parse {json_path}: {e}", file=sys.stderr)
         return None
 
 
@@ -226,10 +269,13 @@ def main():
         'after_q20_rate', 'after_q30_rate', 'after_gc_content',
         'passed_filter_reads', 'low_quality_reads', 'too_many_N_reads',
         'too_short_reads', 'too_long_reads',
-        'duplication_rate', 'insert_size_peak'
+        'duplication_rate', 'insert_size_peak',
+        # 'ok', or 'empty_input' for samples with no usable reads after lane merge
+        'status'
     ]
 
     mqc_data = {}
+    failed_samples = []
 
     # Process files and write CSV
     with open(args.output, 'w', newline='') as csvfile:
@@ -244,7 +290,7 @@ def main():
                 row = [sample_name] + [stats.get(col, 'NA') for col in header[1:]]
                 writer.writerow(row)
                 processed_count += 1
-                print(f"Processed: {sample_name}", file=sys.stderr)
+                print(f"Processed: {sample_name} ({stats['status']})", file=sys.stderr)
 
                 # Scaled (millions) counts for the MultiQC general stats yaml
                 mqc_data[sample_name] = {
@@ -254,7 +300,7 @@ def main():
                     'final_bases': stats['after_total_bases'] / 1e6,
                 }
             else:
-                print(f"Skipped: {sample_name} (parsing failed)", file=sys.stderr)
+                failed_samples.append((sample_name, json_path))
 
     print(f"\nCompleted: {processed_count}/{len(fastp_files)} samples processed", file=sys.stderr)
     print(f"Output: {args.output}", file=sys.stderr)
@@ -262,6 +308,18 @@ def main():
     if args.output_mqc:
         write_general_stats_mqc(mqc_data, args.output_mqc)
         print(f"MultiQC general stats yaml: {args.output_mqc}", file=sys.stderr)
+
+    # A non-empty but unparseable JSON means fastp itself failed for that sample.
+    # Fail loudly rather than shipping a QC summary that is silently missing samples.
+    if failed_samples:
+        print(f"\nERROR: {len(failed_samples)} fastp JSON report(s) could not be parsed:",
+              file=sys.stderr)
+        for sample_name, json_path in failed_samples:
+            print(f"  - {sample_name}: {json_path}", file=sys.stderr)
+        print("These samples are absent from the summary. Check the corresponding fastp "
+              "logs; a truncated or malformed JSON usually means fastp did not finish.",
+              file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
