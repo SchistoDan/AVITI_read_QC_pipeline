@@ -20,6 +20,10 @@ module_order:
       path_filters:
         - "*/03_post_qc/*"
   - seqkit
+  # Only present when mapping.enabled is true in config.yaml; MultiQC ignores
+  # module_order entries whose module finds no files, so this is harmless when
+  # the optional mapping stage is switched off.
+  - samtools
 
 # ---- Drop fastp's plot sections that duplicate FastQC's ----
 # Sequence quality, GC content and N content are kept from FastQC instead.
@@ -49,6 +53,7 @@ table_columns_visible:
     median_sequence_length: false
     percent_fails: false
     total_sequences: false
+    percent_gc: false
     # Hidden by default (still available via 'Configure Columns'). This is a
     # per-mate, head-of-file estimate on trimmed reads, so it is routinely
     # misread as "residual PCR duplication after --dedup", which it is not.

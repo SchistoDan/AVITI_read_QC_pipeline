@@ -9,7 +9,8 @@ date: "`14.04.2026`"
 This simple SOP describes how to configure and run the `aviti_read_qc_pipeline` (a Snakemake-based
 pipeline for QC of raw, basecalled, and demultiplexed AVITI24 sequencing data). The pipeline
 merges lane replicates, runs fastp trimming, falco (FastQC) reporting, and seqkit stats, and
-aggregates everything into a fastp summary spreadsheet and MultiQC report.
+aggregates everything into a fastp summary spreadsheet and MultiQC report. It can optionally
+also align reads to a reference genome and report mapping statistics.
 
 **Prerequisites:** conda must be installed and the repository must be cloned before starting.
 
@@ -45,6 +46,13 @@ conda activate aviti_read_qc_pipeline
 # Verify a key dependency
 snakemake --version   # expected: 9.9.0
 ```
+
+> **If you already have this environment from an earlier release, update it** — `bwa` and
+> `samtools` were added for the optional reference-mapping step:
+> ```{bash}
+> conda env update -f aviti_read_qc_pipeline.yaml --prune
+> ```
+> Only needed if you intend to set `mapping.enabled: true`.
 
 ---
 
@@ -146,6 +154,7 @@ output_dir/
 ├── 02_fastp/               # Trimmed reads, fastp HTML/JSON, summary CSV
 ├── 03_post_qc/             # falco reports (post-fastp)
 ├── 04_seqkit/              # seqkit stats per sample
+├── 05_mapping/             # flagstat per sample + summary TSV (only if mapping.enabled)
 ├── multiqc_report/         # Aggregated MultiQC HTML report
 └── logs/                   # Per-rule logs and sample_manifest.log
 ```
@@ -161,5 +170,9 @@ output_dir/
 | conda activation fails in SLURM | Wrong `source` path | Edit the `source` line in `aviti_read_qc_pipeline.sh` |
 | Dry run shows 0 jobs | Config path errors | Check all paths in `config/config.yaml` exist |
 | MultiQC report missing samples | Rule failed upstream | Check `logs/` for the failing rule |
+| `mapping.reference not found` on startup | `mapping.enabled: true` with a bad or unset `reference` | Correct the path in `config/config.yaml`, or set `mapping.enabled: false` |
+| `bwa index` fails writing to the reference directory | Reference is on read-only or shared storage | Build the index yourself where you have write access: `bwa index /path/to/reference.fasta` |
+| No Samtools section in the MultiQC report | Mapping disabled, or all flagstat files empty | Confirm `mapping.enabled: true` and check `logs/reference_mapping/` |
+| Mapping jobs hit the SLURM walltime | Mapping is hours per sample | Use a longer partition and/or raise `rules.mapping.threads` |
 
 ---
