@@ -59,6 +59,31 @@ fastp:
   extra_args: ""
 
 
+# ===== REFERENCE MAPPING (optional) =====
+# Aligns each sample's fastp-trimmed reads to a reference genome with BWA-MEM and
+# reports mapping statistics via samtools flagstat. Disabled by default; when
+# disabled, no mapping jobs are added to the workflow at all.
+#
+# This is by far the most expensive step in the pipeline — budget walltime and
+# partition accordingly (see rules.mapping below).
+mapping:
+  enabled: false                # set true to align reads and report mapping stats (default: false)
+
+  # Path to the reference genome FASTA. Required when enabled: true.
+  # The BWA index (.amb/.ann/.bwt/.pac/.sa) is built automatically if absent, which
+  # requires the reference's directory to be writable. If it is read-only, build the
+  # index yourself first with: bwa index /path/to/reference.fasta
+  reference: ""
+
+  # Retain a coordinate-sorted, indexed BAM per sample.
+  # false (default): bwa mem is piped straight into samtools flagstat — no sorting and
+  #   no BAM written, so mapping costs almost no disk. Use this when you only want the
+  #   mapping statistics.
+  # true: writes {sample}.sorted.bam + .bai to 05_mapping/{sample}/. Expect tens of GB
+  #   per sample at typical AVITI depths.
+  keep_bam: false
+
+
 # ===== FALCO PARAMETERS =====
 # Applied to both pre_fastqc and post_fastqc rules
 falco:
@@ -100,4 +125,11 @@ rules:
   multiqc:
     mem_mb: 16384      # 16 GB
     threads: 2         # 2 threads
+    partition: "day"
+  # Only used when mapping.enabled is true. Deliberately larger than the other rules:
+  # BWA-MEM holds the whole reference index in memory and is the pipeline's heaviest
+  # step. If this block is omitted entirely, the defaults shown here are used.
+  mapping:
+    mem_mb: 32768      # 32 GB
+    threads: 16        # 16 threads
     partition: "day"

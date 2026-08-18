@@ -20,16 +20,25 @@ module_order:
       path_filters:
         - "*/03_post_qc/*"
   - seqkit
+  # Only present when mapping.enabled is true in config.yaml; MultiQC ignores
+  # module_order entries whose module finds no files, so this is harmless when
+  # the optional mapping stage is switched off.
+  - samtools
 
 # ---- Drop fastp's plot sections that duplicate FastQC's ----
-# Sequence quality, GC content, N content, and duplication levels are
-# kept from FastQC instead. Filtered Reads and Insert Size have no
-# FastQC equivalent and stay put.
+# Sequence quality, GC content and N content are kept from FastQC instead.
+# Filtered Reads and Insert Size have no FastQC equivalent and stay put.
+#
+# fastp-duprates is deliberately NOT removed: it is not a duplicate of FastQC's
+# Sequence Duplication Levels. fastp measures duplication pair-level, over the
+# whole file, on untrimmed reads; FastQC/falco measures it per mate, from the
+# first 100,000 distinct sequences only, on trimmed reads. fastp's is the figure
+# that actually reflects what --dedup acted on, so it is the report's primary
+# duplication signal.
 remove_sections:
   - fastp-seq-quality
   - fastp-seq-content-gc
   - fastp-seq-content-n
-  - fastp-duprates
 
 # ---- General Statistics table ----
 table_columns_visible:
@@ -44,8 +53,42 @@ table_columns_visible:
     median_sequence_length: false
     percent_fails: false
     total_sequences: false
+    percent_gc: false
+    # Hidden by default (still available via 'Configure Columns'). This is a
+    # per-mate, head-of-file estimate on trimmed reads, so it is routinely
+    # misread as "residual PCR duplication after --dedup", which it is not.
+    # See custom_table_header_config below, and the fastp Duplication section
+    # for the pair-level figure.
+    percent_duplicates: false
   seqkit_seqkit:
     N50: false
+
+# ---- Honest titles and hover text for the duplication columns ----
+# Keyed on the full general-stats column ID (namespace slug + column key), which
+# is what MultiQC matches for per-column header overrides. Unlike
+# table_columns_name, this sets the description too, so the tooltip explains what
+# the number actually measures rather than leaving a misleading one in place.
+custom_table_header_config:
+  general_stats_table:
+    fastqc_pre_qc_raw_reads-percent_duplicates:
+      title: "% duplicate reads"
+      description: >-
+        Estimated percentage of duplicate reads in the raw input, from falco's Sequence
+        Duplication Levels module. Measured per mate (R1 and R2 assessed independently,
+        with no pairing), from the first 100,000 distinct sequences seen in the file, then
+        extrapolated to model the full library. Best read as a library-complexity flag.
+    fastqc_post_qc_after_fastp-percent_duplicates:
+      title: "% duplicate reads"
+      description: >-
+        Estimated percentage of duplicate reads AFTER fastp, from falco, measured the same
+        way as the raw-read column: per mate, from the first 100,000 distinct sequences,
+        then extrapolated. This is NOT residual PCR duplication and NOT a measure of
+        whether --dedup worked. fastp's dedup is pair-level and keyed on untrimmed
+        sequence, so a pair kept because its R2 differed is still a perfect duplicate in
+        R1, and fragments that become identical only after adapter trimming are never
+        deduplicated at all. High values here usually mean low library complexity or
+        insert-size collapse after trimming. For the pair-level figure, see the fastp
+        Duplication section.
 
 # Pipeline/report-level info — shown once at the very top of the report
 report_comment: |
@@ -57,5 +100,7 @@ section_comments:
     This table shows both sample- and individual read-level (R1 and R2) statistics to provide an overview of read QC at different stages of the pipeline.
     
     Columns proceed successively from left to right, with pre-QC (FastQC) data columns on the left, and post-QC (FastQC & Seqkit Stats) on the right.
-    
+
+    '% duplicate reads' is a per-mate estimate from the first 100,000 distinct sequences in each file, not a count — it indicates library complexity rather than residual PCR duplication. For the pair-level duplication rate that fastp's `--dedup` actually acted on, see the fastp Duplication section below. The post-QC equivalent is hidden by default and can be enabled via 'Configure Columns'.
+
     Hover over the column headings for more information, and 'Configure Columns' for further information and reformatting of the table.
