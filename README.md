@@ -94,35 +94,11 @@ Each key becomes the sample name used throughout all outputs. Samples not listed
 
 
 ### Reference mapping
-Optional, off by default. Set `mapping.enabled: true` and give `mapping.reference` a path to a reference genome FASTA. When disabled, no mapping jobs are added to the workflow at all — the DAG is identical to a pipeline without this feature.
+Optional, off by default. Each sample's fastp-trimmed reads are aligned with `bwa mem`, read groups are tagged `@RG ID:{sample} SM:{sample} PL:ILLUMINA`, and `samtools flagstat` produces `05_mapping/{sample}/{sample}.flagstat`. Those per-sample reports are compiled into `05_mapping/{run_name}_flagstat_summary.tsv` and are also picked up natively by MultiQC, which adds a Samtools Flagstat section and mapping columns to the General Statistics table.
 
-Each sample's fastp-trimmed reads are aligned with `bwa mem` (one SLURM job per sample, so samples map in parallel), read groups are tagged `@RG ID:{sample} SM:{sample} PL:ILLUMINA`, and `samtools flagstat` produces `05_mapping/{sample}/{sample}.flagstat`. Those per-sample reports are compiled into `05_mapping/{run_name}_flagstat_summary.tsv` and are also picked up natively by MultiQC, which adds a Samtools Flagstat section and mapping columns to the General Statistics table.
+**`keep_bam`:** The default (`false`) pipes `bwa mem` straight into `samtools flagstat`. Setting it `true` writes `{sample}.sorted.bam` plus its index. Leave it `false` unless you need the alignments for downstream work.
 
-**This is by far the most expensive step in the pipeline.** Mapping several hundred million read pairs per sample takes hours; size `rules.mapping` (default 16 threads / 32 GB) and your SLURM partition's walltime accordingly.
-
-**`keep_bam` controls disk usage.** The default (`false`) pipes `bwa mem` straight into `samtools flagstat` — `flagstat` does not need sorted input, so nothing is sorted and no BAM is written. Setting it `true` writes `{sample}.sorted.bam` plus its index, which at typical AVITI depths is tens of GB per sample. Leave it `false` unless you need the alignments for downstream work.
-
-**The BWA index is built automatically** if the `.amb/.ann/.bwt/.pac/.sa` files are missing, which requires the reference's directory to be writable. For a read-only or shared reference, build it yourself first with `bwa index /path/to/reference.fasta`. An existing index is never rebuilt, even if the FASTA's timestamp is newer.
-
-Note the flagstat files are in samtools' **default** output format, not `-O tsv`. MultiQC identifies flagstat reports by matching the string `in total (QC-passed reads + QC-failed reads)`, which only the default format contains, so a `-O tsv` report would be silently missing from the report.
-
-### Interpreting duplication metrics
-The report carries two unrelated duplication measurements. They answer different questions, and reading one as the other is the single easiest mistake to make with this pipeline.
-
-**fastp's Duplication section — pair-level, whole file.** This is the rate that `dedup` acted on, and the figure to quote when asked how duplicated a library was. It is also in the summary CSV as `duplication_rate`. Three properties matter:
-
-- **Exact match, and pair-level.** A pair counts as duplicate only if *both* mates match another pair base-for-base. A single sequencing error or `N` in either mate rescues the pair. With low R2 quality this excludes a large fraction of genuine duplicates.
-- **Keyed on *untrimmed* reads.** fastp hashes the raw sequence before any trimming, so two fragments that are identical *after* adapter trimming but differ in their adapter-derived tails are never recognised as duplicates. `dedup` is therefore raw-read deduplication, not fragment-level deduplication.
-- **Approximate.** Detection uses a Bloom filter of bounded size (`--dup_calc_accuracy`, default 3 when `dedup` is on). Collisions can only ever produce false *positives* — a unique read wrongly discarded — never false negatives, and the rate rises with sequencing depth.
-
-Treat `dedup` as an opportunistic PCR/optical duplicate reducer, not an authoritative deduplication step. If you need a real duplicate rate, mark duplicates after alignment (`samtools markdup`) or use a k-mer/prefix tool (`clumpify`, `seqkit rmdup`).
-
-**`% duplicate reads` in the General Statistics table — per mate, estimated.** This comes from falco's Sequence Duplication Levels module and is *not* a residual-PCR-duplicate count. It is computed per file with no pairing (so a pair kept because its R2 differed is still a perfect duplicate in R1), from only the first 100,000 distinct sequences encountered, then binned and extrapolated to model the full library. At a few hundred million reads per file that cap is reached in the first fraction of a percent of the file, which is also position-biased on the flow cell.
-
-Read it as a **library-complexity / insert-size-collapse indicator**. A high post-fastp value usually means short inserts rather than PCR duplication: heavily adapter-contaminated samples trim down to very short reads, and short reads have so little sequence space that genuinely distinct fragments collapse into identical strings. The post-QC column is hidden by default for this reason and can be enabled via 'Configure Columns'; the raw-read column is kept visible as a complexity flag.
-
-**Read counts.** `filtering_result.passed_filter_reads` is counted *before* duplicate removal and so overstates delivered yield whenever `dedup` is on. The authoritative delivered-read figures are `after_total_reads` / `after_total_bases` in the CSV, and the "Reads After Filtering" / "Bases After Filtering" columns in the report, all taken from `summary.after_filtering`.
-
+**The BWA index building:** If index files are missing. For a read-only or shared reference, build it yourself first with `bwa index /path/to/reference.fasta`. An existing index is never rebuilt, even if the FASTA's timestamp is newer. Note the flagstat files are in samtools' **default** output format, not `-O tsv`. MultiQC identifies flagstat reports by matching the string `in total (QC-passed reads + QC-failed reads)`.
 
 ## Key parameters in `config/config.yaml`
 **General**
@@ -187,6 +163,8 @@ Each rule block accepts `mem_mb`, `threads`, and `partition` (SLURM partition na
 ---
 
 ## Output directory structure
+<details>
+<summary><b>Full directory tree</b></summary>
 ```
 output_dir/
 ├── 00_lane_merge/              # Per-sample lane-concatenated FASTQ files
@@ -238,6 +216,8 @@ output_dir/
     ├── mapping_summary/        # Only when mapping.enabled: true
     └── multiqc/
 ```
+</details>
+
 
 ---
 
