@@ -70,6 +70,31 @@ def validate_config(config):
         sys.stderr.write("ERROR: lane_merge.enabled must be true or false (boolean) in config.yaml\n")
         sys.exit(1)
 
+    # Validate mapping config block if present
+    mapping_cfg = config.get("mapping", {})
+    if not isinstance(mapping_cfg, dict):
+        sys.stderr.write("ERROR: mapping must be a mapping block in config.yaml\n")
+        sys.exit(1)
+    for flag in ("enabled", "keep_bam"):
+        if flag in mapping_cfg and not isinstance(mapping_cfg[flag], bool):
+            sys.stderr.write(f"ERROR: mapping.{flag} must be true or false (boolean) in config.yaml\n")
+            sys.exit(1)
+
+    # A reference is only required when mapping is switched on, so that configs which
+    # never use the optional stage do not have to carry a reference path
+    if mapping_cfg.get("enabled", False):
+        reference = mapping_cfg.get("reference", "")
+        if not reference or not str(reference).strip():
+            sys.stderr.write(
+                "ERROR: mapping.enabled is true but mapping.reference is not set. "
+                "Provide the path to a reference genome FASTA in config.yaml, or set "
+                "mapping.enabled: false.\n"
+            )
+            sys.exit(1)
+        if not os.path.isfile(reference):
+            sys.stderr.write(f"ERROR: mapping.reference not found (or is not a file): {reference}\n")
+            sys.exit(1)
+
     # Validate sample_aliases if present
     aliases = config.get("sample_aliases", {})
     if not isinstance(aliases, dict):
@@ -612,15 +637,52 @@ fastp_cfg       = config.get("fastp", {})
 lane_merge_cfg  = config.get("lane_merge", {})
 lane_merge_enabled = lane_merge_cfg.get("enabled", True)
 
+mapping_cfg       = config.get("mapping", {})
+mapping_enabled   = mapping_cfg.get("enabled", False)
+mapping_reference = mapping_cfg.get("reference", "")
+mapping_keep_bam  = mapping_cfg.get("keep_bam", False)
+
+# Resources for the optional mapping stage. Merged over defaults rather than indexed
+# out of rule_resources directly, so that a config.yaml predating the mapping stage
+# (i.e. with no rules.mapping block) still parses.
+mapping_res = {
+    "threads": 16,
+    "mem_mb": 32768,
+    "partition": "day",
+    **rule_resources.get("mapping", {}),
+}
+
 lane_merge_dir  = os.path.join(output_dir, "00_lane_merge")
 pre_qc_dir      = os.path.join(output_dir, "01_pre_qc")
 fastp_dir       = os.path.join(output_dir, "02_fastp")
 post_qc_dir     = os.path.join(output_dir, "03_post_qc")
 seqkit_dir      = os.path.join(output_dir, "04_seqkit")
+mapping_dir     = os.path.join(output_dir, "05_mapping")
 multiqc_dir     = os.path.join(output_dir, "multiqc_report")
 logs_dir        = os.path.join(output_dir, "logs")
 
 SAMPLES = list(sample_table.keys())
+
+# Optional mapping outputs. Empty when mapping is disabled, so that referencing this
+# in rule all / rule multiqc is a true no-op rather than a conditional branch.
+mapping_flagstats = (
+    expand(os.path.join(mapping_dir, "{sample}", "{sample}.flagstat"), sample=SAMPLES)
+    if mapping_enabled else []
+)
+mapping_targets = (
+    mapping_flagstats + [os.path.join(mapping_dir, f"{run_name}_flagstat_summary.tsv")]
+    if mapping_enabled else []
+)
+
+# Outputs of rule reference_mapping. The BAM/BAI are declared only when they are being
+# kept, so that Snakemake tracks and cleans them; the default streaming path writes no
+# BAM at all. Built here rather than inline in the rule so it is plain Python.
+mapping_outputs = {
+    "flagstat": os.path.join(mapping_dir, "{sample}", "{sample}.flagstat"),
+}
+if mapping_keep_bam:
+    mapping_outputs["bam"] = os.path.join(mapping_dir, "{sample}", "{sample}.sorted.bam")
+    mapping_outputs["bai"] = os.path.join(mapping_dir, "{sample}", "{sample}.sorted.bam.bai")
 
 
 # ===== RULE ALL =====
@@ -648,6 +710,9 @@ rule all:
 
         # seqkit stats
         expand(os.path.join(seqkit_dir, "{sample}", "{sample}_seqkit_stats.txt"), sample=SAMPLES),
+
+        # Reference mapping (empty list when mapping.enabled is false)
+        mapping_targets,
 
         # fastp summary CSV
         os.path.join(fastp_dir, f"{run_name}_fastp_summary.csv"),
@@ -1019,6 +1084,174 @@ rule seqkit_stats:
         """
 
 
+# ===== RULES: OPTIONAL REFERENCE MAPPING =====
+# Defined only when mapping.enabled is true, so that a run with mapping switched off
+# never evaluates an unset reference path and the workflow DAG is byte-for-byte what it
+# was before this stage existed.
+
+if mapping_enabled:
+
+    rule bwa_index:
+        # ancient() deliberately ignores the reference FASTA's mtime. Without it, a
+        # reference whose timestamp happens to be newer than an existing valid index
+        # would trigger a multi-hour rebuild — which also fails outright when the
+        # reference lives in a read-only shared directory, as is common on HPC.
+        input:
+            ref=ancient(mapping_reference)
+        output:
+            multiext(mapping_reference, ".amb", ".ann", ".bwt", ".pac", ".sa")
+        log:
+            out=os.path.join(logs_dir, "bwa_index", "bwa_index.out"),
+            err=os.path.join(logs_dir, "bwa_index", "bwa_index.err")
+        threads: 1
+        resources:
+            mem_mb=lambda wildcards, attempt: mapping_res["mem_mb"] * attempt,
+            slurm_partition=mapping_res.get("partition", "")
+        retries: 2
+        shell:
+            """
+            set -euo pipefail
+
+            mkdir -p $(dirname {log.out})
+
+            echo "bwa index: {input.ref}" > {log.out}
+            echo "Started: $(date)" >> {log.out}
+
+            bwa index {input.ref} >> {log.out} 2>> {log.err}
+
+            echo "Completed: $(date)" >> {log.out}
+            """
+
+
+    rule reference_mapping:
+        input:
+            r1=os.path.join(fastp_dir, "{sample}", "{sample}_R1.fastq.gz"),
+            r2=os.path.join(fastp_dir, "{sample}", "{sample}_R2.fastq.gz"),
+            # Referenced off the index rule so the two lists cannot drift apart
+            idx=rules.bwa_index.output
+        output:
+            # See mapping_outputs above. Note the flagstat is DEFAULT format, not -O tsv:
+            # MultiQC detects flagstat files by content, matching "in total (QC-passed
+            # reads + QC-failed reads)", and that "in " prefix appears only in the default
+            # format — a tsv-format file would be silently ignored by the report.
+            **mapping_outputs
+        params:
+            reference=mapping_reference,
+            keep_bam=int(mapping_keep_bam),
+            # Always set so the shell can reference it in either branch, even when the
+            # BAM is not a declared output.
+            bam=os.path.join(mapping_dir, "{sample}", "{sample}.sorted.bam"),
+            sort_tmp=os.path.join(mapping_dir, "{sample}", "{sample}.sorttmp")
+        log:
+            out=os.path.join(logs_dir, "reference_mapping", "{sample}.out"),
+            err=os.path.join(logs_dir, "reference_mapping", "{sample}.err")
+        threads: mapping_res["threads"]
+        resources:
+            mem_mb=lambda wildcards, attempt: mapping_res["mem_mb"] * attempt,
+            slurm_partition=mapping_res.get("partition", "")
+        retries: 2
+        shell:
+            """
+            set -euo pipefail
+
+            mkdir -p $(dirname {output.flagstat})
+            mkdir -p $(dirname {log.out})
+
+            echo "======== reference mapping: {wildcards.sample} ========" > {log.out}
+            echo "Started  : $(date)" >> {log.out}
+            echo "Input R1 : {input.r1}" >> {log.out}
+            echo "Input R2 : {input.r2}" >> {log.out}
+            echo "Reference: {params.reference}" >> {log.out}
+            echo "Threads  : {threads}" >> {log.out}
+            echo "Keep BAM : {params.keep_bam}" >> {log.out}
+            echo "=======================================================" >> {log.out}
+
+            # Check for empty input (placeholder from fastp skip)
+            if [[ ! -s "{input.r1}" ]] || [[ ! -s "{input.r2}" ]]; then
+                echo "WARNING: Input file(s) are empty — sample had no usable reads after fastp." >> {log.out}
+                echo "Creating empty placeholder output(s) and skipping mapping." >> {log.out}
+                touch {output}
+                echo "Completed (skipped): $(date)" >> {log.out}
+                exit 0
+            fi
+
+            if [[ "{params.keep_bam}" -eq 1 ]]; then
+                # -T keeps sort temp files inside the sample's output directory: with
+                # retries and --rerun-incomplete, a killed sort would otherwise scatter
+                # temp files through the default location.
+                echo "Mapping and writing sorted BAM" >> {log.out}
+                bwa mem \
+                    -t {threads} \
+                    -R '@RG\\tID:{wildcards.sample}\\tSM:{wildcards.sample}\\tPL:ILLUMINA' \
+                    {params.reference} \
+                    {input.r1} {input.r2} \
+                    2>> {log.err} \
+                  | samtools sort -@ {threads} -T {params.sort_tmp} -o {params.bam} - \
+                    2>> {log.err}
+
+                samtools index -@ {threads} {params.bam} >> {log.out} 2>> {log.err}
+                samtools flagstat -@ {threads} {params.bam} > {output.flagstat} 2>> {log.err}
+
+                echo "BAM size: $(numfmt --to=iec $(stat -c%s {params.bam}))" >> {log.out}
+            else
+                # flagstat does not require sorted input, so stream straight into it and
+                # never write a BAM. This is the default because a sorted BAM at typical
+                # AVITI depths is tens of GB per sample.
+                echo "Mapping and streaming to flagstat (no BAM retained)" >> {log.out}
+                bwa mem \
+                    -t {threads} \
+                    -R '@RG\\tID:{wildcards.sample}\\tSM:{wildcards.sample}\\tPL:ILLUMINA' \
+                    {params.reference} \
+                    {input.r1} {input.r2} \
+                    2>> {log.err} \
+                  | samtools flagstat -@ {threads} - \
+                    > {output.flagstat} \
+                    2>> {log.err}
+            fi
+
+            echo "Completed: $(date)" >> {log.out}
+            echo "Flagstat output:" >> {log.out}
+            cat {output.flagstat} >> {log.out}
+            """
+
+
+    rule mapping_summary:
+        input:
+            flagstats=mapping_flagstats
+        output:
+            tsv=os.path.join(mapping_dir, f"{run_name}_flagstat_summary.tsv")
+        params:
+            script=os.path.join(workflow.basedir, "scripts", "parse_flagstat.py"),
+            mapping_dir=mapping_dir
+        log:
+            out=os.path.join(logs_dir, "mapping_summary", "mapping_summary.out"),
+            err=os.path.join(logs_dir, "mapping_summary", "mapping_summary.err")
+        threads: 1
+        resources:
+            mem_mb=4096,
+            slurm_partition=mapping_res.get("partition", "")
+        retries: 2
+        shell:
+            """
+            set -euo pipefail
+
+            mkdir -p $(dirname {log.out})
+
+            echo "flagstat summary: {run_name}" > {log.out}
+            echo "Started: $(date)" >> {log.out}
+            echo "Input dir: {params.mapping_dir}" >> {log.out}
+            echo "Output TSV: {output.tsv}" >> {log.out}
+
+            python {params.script} \
+                --input {input.flagstats} \
+                --output {output.tsv} \
+                >> {log.out} 2>> {log.err}
+
+            echo "Completed: $(date)" >> {log.out}
+            echo "Rows in output: $(wc -l < {output.tsv})" >> {log.out}
+            """
+
+
 # ===== RULE: FASTP SUMMARY CSV =====
 
 rule fastp_summary:
@@ -1078,13 +1311,20 @@ rule multiqc:
         expand(os.path.join(post_qc_dir, "{sample}", "{sample}_R2_fastqc.zip"), sample=SAMPLES),
         # seqkit stats
         expand(os.path.join(seqkit_dir, "{sample}", "{sample}_seqkit_stats.txt"), sample=SAMPLES),
+        # samtools flagstat (empty list when mapping.enabled is false)
+        mapping_flagstats,
         # MultiQC config
         config_yaml=os.path.normpath(os.path.join(workflow.basedir, "..", "config", "multiqc_config.yaml"))
     output:
         report=os.path.join(multiqc_dir, f"{run_name}_multiqc_report.html"),
         data_dir=directory(os.path.join(multiqc_dir, f"{run_name}_multiqc_report_data"))
     params:
-        search_dirs=f"{pre_qc_dir} {fastp_dir} {post_qc_dir} {seqkit_dir}",
+        # mapping_dir must be appended here as well as to input, or MultiQC silently
+        # omits the Samtools section even though the flagstat files exist
+        search_dirs=(
+            f"{pre_qc_dir} {fastp_dir} {post_qc_dir} {seqkit_dir}"
+            + (f" {mapping_dir}" if mapping_enabled else "")
+        ),
         outdir=multiqc_dir,
         report_name=f"{run_name}_multiqc_report",
         extra_args=config.get("multiqc", {}).get("extra_args", "")
